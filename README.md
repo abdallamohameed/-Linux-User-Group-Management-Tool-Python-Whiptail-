@@ -5,8 +5,6 @@ It helps you manage **users** and **groups** using a clean menu interface built 
 
 > ⚠️ This tool must be run as **root** because it executes system administration commands like `useradd`, `usermod`, `groupadd`, etc.
 
----
-
 ## Features
 
 ### User Management
@@ -48,7 +46,6 @@ It helps you manage **users** and **groups** using a clean menu interface built 
   - Normal groups only (GID ≥ 1000)
   - All groups (root only)
 
----
 
 ## Requirements
 
