@@ -1,0 +1,533 @@
+#!/usr/bin/env python3
+import os
+import subprocess
+
+# ----------------------------------------------
+def menu(title, items, h="22", w="75", lh="13"):
+    """
+    items = [("Tag","Desc"), ...]
+    returns Tag or None if exit/esc
+    """
+    cmd = ["whiptail", "--title", title, "--menu", "", h, w, lh]
+    for t, d in items:
+        cmd += [t, d]
+
+    p = subprocess.run(cmd, stderr=subprocess.PIPE, text=True)
+    if p.returncode != 0:
+        return None
+    return p.stderr.strip()
+
+def ask(title, text, h="10", w="60"):
+    p = subprocess.run(
+        ["whiptail", "--title", title, "--inputbox", text, h, w, ""],
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    if p.returncode != 0:
+        return None
+    return p.stderr.strip()
+
+def msg(title, text, h="12", w="70"):
+    subprocess.run(["whiptail", "--title", title, "--msgbox", text, h, w])
+
+def yesno(title, text, h="10", w="60"):
+    p = subprocess.run(["whiptail", "--title", title, "--yesno", text, h, w])
+    return p.returncode == 0
+
+# ------------------------------------------------
+def user_exists(username):
+    return os.system(f"id {username} >/dev/null 2>&1") == 0
+
+def group_exists(groupname):
+    return os.system(f"getent group {groupname} >/dev/null 2>&1") == 0
+#----------------------------------------------------------------
+def add_user_wizard():
+
+    username = ask("Add User", "Enter username:")
+    if not username:
+        return
+    username = username.strip()
+
+    if user_exists(username):
+        msg("Error", "User already exists.")
+        return
+
+    comment = ask("Add User", "Comment -c (optional):")
+    if comment is None:
+        return
+
+    with_home = yesno("Add User", "Create home directory? (-m)")
+
+    shell = ask("Add User", "Shell (optional, example /bin/bash):")
+    if shell is None:
+        return
+
+    # ---- Create user ----
+    cmd = ["useradd"]
+
+    if with_home:
+        cmd += ["-m"]
+    if comment:
+        cmd += ["-c", comment]
+    if shell:
+        cmd += ["-s", shell]
+
+    cmd += [username]
+
+    subprocess.run(cmd)
+
+
+    if yesno("Add User", "Set password now?"):
+        os.system(f"passwd {username}")
+        msg("Done", "Password set.")
+        # 6) Final Options
+    while True:
+        choice = menu("Final Options",
+                      [
+                          ("1", "Set primary group (-g)"),
+                          ("2", "Add groups (-aG)"),
+                          ("3", "Set UID (-u)"),
+                          ("0", "Finish")
+                      ],
+                      h="18", w="70", lh="8")
+
+        if choice in (None, "0"):
+            msg("Finished", "Add User completed.")
+            return
+
+        elif choice == "1":
+            g = ask("Primary Group", "Enter group name:")
+            if not g:
+                continue
+
+            g = g.strip()
+            if not group_exists(g):
+                msg("Error", "Group does not exist.")
+                continue
+
+            os.system(f"usermod -g {g} {username}")
+            msg("Done", "Primary group updated.")
+
+        elif choice == "2":
+            gs = ask("Groups", "Enter groups (comma separated):")
+            if not gs:
+                continue
+
+            gs = gs.strip()
+            groups = gs.split(",")
+
+            error = False
+            for g in groups:
+                if not group_exists(g.strip()):
+                    msg("Error", f"Group '{g}' does not exist.")
+                    error = True
+                    break
+
+            if error:
+                continue
+
+            os.system(f"usermod -aG {gs} {username}")
+            msg("Done", "Groups added.")
+
+        elif choice == "3":
+            uid = ask("UID", "Enter UID number:")
+            if not uid:
+                continue
+
+            uid = uid.strip()
+
+            if os.system(f"getent passwd {uid} >/dev/null 2>&1") == 0:
+                msg("Error", "This UID is already used.")
+                continue
+
+            os.system(f"usermod -u {uid} {username}")
+            msg("Done", "UID updated.")
+# --------------------------------------------------
+def modify_user():
+    while True:
+        u = ask("Modify User", "Enter username (must exist):")
+        if u is None:
+            return
+        u = u.strip()
+        if u == "":
+            msg("Error", "Username is required.")
+            continue
+        if not user_exists(u):
+            msg("Error", "User not found. Try again.")
+            continue
+        break
+
+    # Step 2: options for this user
+    while True:
+        choice = menu(
+            f"Modify User: {u}",
+            [
+                ("1", "Change shell (-s)"),
+                ("2", "Change comment (-c)"),
+                ("3", "Change home (-d)"),
+                ("4", "Rename user (-l)"),
+                ("5", "Add to Secondary group (-aG)"),
+                ("6", "Override the Secindary groups (-G)"),
+                ("7", "Remove from group (gpasswd -d)"),
+                ("8", "Show user info (id)"),
+                ("0", "Back")
+            ],
+            h="20", w="75", lh="10"
+        )
+
+        if choice in (None, "0"):
+            return
+
+        if choice == "1":
+            new_shell = ask("Change Shell", "Enter new shell (example: /bin/bash):")
+            if new_shell:
+                os.system(f"usermod -s {new_shell} {u}")
+                msg("Done", "Shell updated.")
+        elif choice == "2":
+            new_comment = ask("Change Comment", "Enter new Comment :")
+            if new_comment:
+                os.system(f"usermod -c {new_comment} {u}")
+                msg("Done", "Comment updated.")
+
+        elif choice == "3":
+            new_home = ask("Change Home", "Enter new home path (example: /home/new):")
+            if new_home:
+                os.system(f"usermod -d {new_home} {u}")
+                msg("Done", "Home updated.")
+
+        elif choice == "4":
+            new_name = ask("Rename User", "Enter new username:")
+            if new_name:
+                if user_exists(new_name):
+                    msg("Error", "New username already exists.")
+                else:
+                    os.system(f"usermod -l {new_name} {u}")
+                    msg("Done", "User renamed.")
+                    u = new_name
+
+        elif choice == "5":
+            g = ask("Add to Group", "Enter group name:")
+            g=g.strip()
+            if not g:
+                continue
+            if not group_exists(g):
+                msg("Error", "Group does not exist.")
+                continue
+            os.system(f"usermod -aG {g} {u}")
+            msg("Done", "Added to group.")
+
+        elif choice == "6":
+            g = ask("Override the secondary Groups", "Enter group name:")
+            g=g.strip()
+            if not g:
+                continue
+            if not group_exists(g):
+                msg("Error", "Group does not exist.")
+                continue
+            os.system(f"usermod -G {g} {u}")
+            msg("Done", "Added to group.")
+
+        elif choice == "7":
+            g = ask("Remove from Group", "Enter group name:")
+            g=g.strip()
+            if not g:
+                continue
+            if not group_exists(g):
+                msg("Error", "Group does not exist.")
+                continue
+            os.system(f"gpasswd -d {u} {g}")
+            msg("Done", "Removed from group.")
+
+        elif choice == "8":
+            os.system(f"id {u} | less")
+def delete_user():
+    u = ask("Delete User", "Enter username to delete:")
+    u=u.strip()
+    if not u:
+        msg("Error", "cant be Empty.")
+        return
+    if not user_exists(u):
+        msg("Error", "User  does not exist.")
+        return
+    if yesno("Delete User", "Remove home directory too? (userdel -r)"):
+        os.system(f"userdel -r {u}")
+    else:
+        os.system(f"userdel {u}")
+    msg("Done", "User deleted .")
+
+def list_users():
+    while True:
+        choice = menu("List Users",
+                  [
+                      ("1", "List normal users only"),
+                      ("2", "List ALL users (root only)"),
+                      ("0", "Back")
+                  ],
+                  h="16", w="70", lh="6")
+
+        if choice in (None, "0"):
+            return
+
+    # 1) Normal users only (UID >= 1000)
+        if choice == "1":
+            os.system("awk -F: '$3>=1000 {printf \"%-15s %-6s %-6s %s\\n\", $1, $3, $4, $7}' /etc/passwd | less")
+    # 2) All users (only if root)
+        elif choice == "2":
+            if os.geteuid() != 0:
+                 msg("Error", "Only root can list all users.")
+                 continue
+
+            os.system("cat /etc/passwd | less")
+def add_group():
+    g = ask("Add Group", "Enter group name:")
+    if not g:
+        msg("Error", "Enter Valid Value.")
+        return
+    g = g.strip()
+    if group_exists(g):
+        msg("Error", "Group already exists.")
+        return
+    os.system(f"groupadd {g}")
+    msg("Done", "group added.")
+
+def modify_group():
+    while True:
+        g = ask("Modify Group", "Enter group name (must exist):")
+        if g is None:
+            msg("Error", "Group name is required.")
+            return
+        g = g.strip()
+        if g == "":
+            msg("Error", "Group name is required.")
+            continue
+        if not group_exists(g):
+            msg("Error", "Group not found. Try again.")
+            continue
+        break
+
+    # Step 2: options for this group
+    while True:
+        choice = menu(
+            f"Modify Group: {g}",
+            [
+                ("1", "Rename group (-n)"),
+                ("2", "Add user to group (usermod -aG)"),
+                ("3", "Remove user from group (gpasswd -d)"),
+                ("4", "Show group info (getent group)"),
+                ("0", "Back")
+            ],
+            h="18", w="75", lh="8"
+        )
+
+        if choice in (None, "0"):
+            return
+
+        elif choice == "1":
+            new = ask("Rename Group", "Enter new group name:")
+            if not new:
+                msg("Error", "Group name is required.")
+                continue
+            new = new.strip()
+            if group_exists(new):
+                msg("Error", "New group name already exists.")
+                continue
+            os.system(f"groupmod -n {new} {g}")
+            msg("Done", "Group renamed.")
+            g = new  
+
+        elif choice == "2":
+            u = ask("Add Member", "Enter username to add:")
+            if not u:
+                msg("Error", "User name is required.")
+                continue
+            u = u.strip()
+            if not user_exists(u):
+                msg("Error", "User not found.")
+                continue
+            os.system(f"usermod -aG {g} {u}")
+            msg("Done", "User added to group.")
+
+        elif choice == "3":
+            u = ask("Remove Member", "Enter username to remove:")
+            if not u:
+                msg("Error", "User name is required.")
+                continue
+            u = u.strip()
+            if not user_exists(u):
+                msg("Error", "User not found.")
+                continue
+            os.system(f"gpasswd -d {u} {g}")
+            msg("Done", "User removed from group.")
+
+        elif choice == "4":
+            if not g:
+                msg("Error", "Group name is required.")
+                continue
+            g = g.strip()
+            if not group_exists(g):
+                msg("Error", "Group not found.")
+                continue
+            os.system(f"getent group {g} | less")
+def delete_group():
+    g = ask("Delete Group", "Enter group name to delete:")
+    if not g:
+        msg("Error", "Group  name is required.")
+        return
+
+    g = g.strip()
+
+    if not group_exists(g):
+        msg("Error", "Group does not exist.")
+        return
+    # get group gid
+    gid = os.popen(f"getent group {g} | cut -d: -f3").read().strip()
+
+    # check if used as primary group
+    check = os.system(f"awk -F: '$4=={gid} {{exit 1}}' /etc/passwd")
+
+    if check != 0:
+        msg("Error", "This group is a primary group for a user.\nCannot delete it.")
+        return
+
+    # delete group
+    os.system(f"groupdel {g}")
+
+    msg("Done", "Group deleted successfully.")
+def list_groups():
+    while True:
+        choice = menu("List Groups",
+                  [
+                      ("1", "List normal groups only"),
+                      ("2", "List ALL groups"),
+                      ("0", "Back")
+                  ],
+                  h="16", w="70", lh="6")
+
+        if choice in (None, "0"):
+            return
+
+    # normal groups (GID >= 1000)
+        if choice == "1":
+            os.system("awk -F: '$3>=1000 {print $1}' /etc/group | less")
+    # all groups
+        elif choice == "2":
+            if os.geteuid() != 0:
+                 msg("Error", "Only root can list all groups.")
+                 continue
+            os.system("cat /etc/group | less")
+def disable_user():
+    u = ask("Disable User", "Enter username to lock:")
+    if not u:
+        msg("Error", "User name is required.")
+        return
+
+    u = u.strip()
+
+    if not user_exists(u):
+        msg("Error", "User does not exist.")
+        return
+
+    # lock user
+    os.system(f"usermod -L {u}")
+
+    msg("Done", "User locked successfully.")
+def enable_user():
+    u = ask("Enable User", "Enter username to unlock:")
+    if not u:
+        msg("Error", "User name is required.")
+        return
+
+    u = u.strip()
+
+    if not user_exists(u):
+        msg("Error", "User does not exist.")
+        return
+
+    # unlock user
+    os.system(f"usermod -U {u}")
+
+    msg("Done", "User unlocked successfully.")
+def change_password():
+    u = ask("Change Password", "Enter username:")
+    if not u:
+        msg("Error", "User name is required.")
+        return
+
+    u = u.strip()
+
+    if not user_exists(u):
+        msg("Error", "User does not exist.")
+        return
+
+    os.system(f"passwd {u}")
+
+    msg("Done", "Password updated successfully.")
+def about():
+    msg(
+        "About",
+        "Hi, I'm Abdalla Mohamed Aboelfotouh, a System Administrator.\n"
+        "This project demonstrates how Python scripts can be powerful tool \n" 
+        "common system administration tasks related to users and groups.\n"
+        "It is a practical learning project that I will publish on GitHub\n"
+        "as part of my portfolio.\n"
+        "I hope you find it useful and helpful.Thank you."
+    )
+# -----------------------------------------------
+def main():
+    if os.geteuid() != 0:
+        print("Run as root: sudo python3 tool.py")
+        return
+
+    while True:
+        choice = menu("Main Menu", [
+            ("Add User", "Add a user to the system."),
+            ("Modify User", "Modify an existing user."),
+            ("Delete User", "Delete an existing user."),
+            ("List Users", "List all users on the system."),
+            ("Add Group", "Add a user group to the system."),
+            ("Modify Group", "Modify a group and its list of members."),
+            ("Delete Group", "Delete an existing group."),
+            ("List Groups", "List all groups on the system."),
+            ("Disable User", "Lock the user account."),
+            ("Enable User", "Unlock the user account."),
+            ("Change Password", "Change Password of a user."),
+            ("About", "information about this program."),
+            ("Exit", "Exit the program.")
+        ])
+
+        if choice is None:
+            break
+
+        if choice == "Add User":
+            add_user_wizard()
+        elif choice == "Modify User":
+            modify_user()
+        elif choice == "Delete User":
+            delete_user()
+        elif choice == "List Users":
+            list_users()
+        elif choice == "Add Group":
+            add_group()
+        elif choice == "Modify Group":
+            modify_group()
+        elif choice == "Delete Group":
+            delete_group()
+        elif choice == "List Groups":
+            list_groups()
+        elif choice == "Disable User":
+            disable_user()
+        elif choice == "Enable User":
+            enable_user()
+        elif choice == "Change Password":
+            change_password()
+        elif choice == "About":
+            about()
+        elif choice == "Exit":
+            if yesno("Exit Confirmation", "Are you sure you want to exit?"):
+                msg("Goodbye", "Thank you for using MY tool.\nGoodbye!")
+                break
+            else:
+                continue
+
+if __name__ == "__main__":
+    main()
